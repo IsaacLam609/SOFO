@@ -50,7 +50,7 @@ let __prepare a =
 
 let zero_adj p = { p; a = Some (zeros_like p) }
 
-(* is it better to use this to update the adjoint externally 
+(* is it better to use this to update the adjoint externally
 from other scripts instead of exposing x.a? *)
 let update_adj x delta =
   x.a
@@ -110,12 +110,8 @@ module Make (P : Prms.T) = struct
 
   (* do we need another function name or it is ok to use grad since it is under Make *)
   (* idea: let users pass in their own effect handler  *)
-  let grad
-        (run : (dual P.p -> dual) -> dual P.p -> dual) (* effect handler *)
-        (f : dual P.p -> dual)
-        (x : dual P.p)
-    =
-    let fx = run f x in
+  let grad (f : dual P.p -> dual) (x : dual P.p) =
+    let fx = grad f x in
     let g =
       P.map x ~f:(fun x ->
         match x.a with
