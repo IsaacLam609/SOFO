@@ -8,12 +8,15 @@ val primal : dual -> any t
 val adjoint : dual -> const t option
 val lift1 : (any t -> any t) -> dual -> dual
 val lift2 : (any t -> any t -> any t) -> dual -> dual -> dual
+val lift2_float : (float -> any t -> any t) -> float -> dual -> dual
 val ( + ) : dual -> dual -> dual
 val ( - ) : dual -> dual -> dual
 val ( * ) : dual -> dual -> dual
 val ( / ) : dual -> dual -> dual
 val ( $+ ) : float -> dual -> dual
 val ( $- ) : float -> dual -> dual
+val ( $* ) : float -> dual -> dual
+val ( $/ ) : float -> dual -> dual
 val ( *@ ) : dual -> dual -> dual
 val sigmoid : dual -> dual
 val tanh : dual -> dual
