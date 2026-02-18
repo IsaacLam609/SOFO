@@ -22,10 +22,10 @@ let ( + ) a b = lift2 ( + ) a b
 let ( - ) a b = lift2 ( - ) a b
 let ( * ) a b = lift2 ( * ) a b
 let ( / ) a b = lift2 ( / ) a b
-let ( $+ ) a b = lift2_float ( $+ ) a b
-let ( $- ) a b = lift2_float ( $- ) a b
-let ( $* ) a b = lift2_float ( $* ) a b
-let ( $/ ) a b = lift2_float ( $/ ) a b
+let ( +$ ) a b = lift2_float ( $+ ) a b
+let ( -$ ) a b = lift2_float ( $- ) a b
+let ( *$ ) a b = lift2_float ( $* ) a b
+let ( /$ ) a b = lift2_float ( $/ ) a b
 let ( *@ ) a b = lift2 ( *@ ) a b
 let sigmoid a = lift1 sigmoid a
 let tanh a = lift1 tanh a
@@ -50,8 +50,6 @@ let __prepare a =
 
 let zero_adj p = { p; a = Some (zeros_like p) }
 
-(* is it better to use this to update the adjoint externally
-from other scripts instead of exposing x.a? *)
 let update_adj x delta =
   x.a
   <- (match x.a with
@@ -108,8 +106,6 @@ let grad f x =
 module Make (P : Prms.T) = struct
   let const p = P.map p ~f:(fun p -> { p; a = Some (zeros_like p) })
 
-  (* do we need another function name or it is ok to use grad since it is under Make *)
-  (* idea: let users pass in their own effect handler  *)
   let grad (f : dual P.p -> dual) (x : dual P.p) =
     let fx = grad f x in
     let g =

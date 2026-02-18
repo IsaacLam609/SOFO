@@ -13,10 +13,10 @@ val ( + ) : dual -> dual -> dual
 val ( - ) : dual -> dual -> dual
 val ( * ) : dual -> dual -> dual
 val ( / ) : dual -> dual -> dual
-val ( $+ ) : float -> dual -> dual
-val ( $- ) : float -> dual -> dual
-val ( $* ) : float -> dual -> dual
-val ( $/ ) : float -> dual -> dual
+val ( +$ ) : float -> dual -> dual
+val ( -$ ) : float -> dual -> dual
+val ( *$ ) : float -> dual -> dual
+val ( /$ ) : float -> dual -> dual
 val ( *@ ) : dual -> dual -> dual
 val sigmoid : dual -> dual
 val tanh : dual -> dual
@@ -31,4 +31,3 @@ module Make (P : Prms.T) : sig
   val const : any t P.p -> dual P.p
   val grad : (dual P.p -> dual) -> dual P.p -> any t * const t P.p
 end
-
