@@ -31,6 +31,7 @@ let sigmoid a = lift1 sigmoid a
 let tanh a = lift1 tanh a
 let mean a = lift1 mean a
 let sqr a = lift1 sqr a
+let log a = lift1 log a
 
 let eval f x =
   match f x with

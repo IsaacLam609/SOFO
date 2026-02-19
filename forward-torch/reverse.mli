@@ -22,6 +22,7 @@ val sigmoid : dual -> dual
 val tanh : dual -> dual
 val mean : dual -> dual
 val sqr : dual -> dual
+val log : dual -> dual
 val eval : ('a -> 'b) -> 'a -> 'b
 val zero_adj : any t -> dual
 val update_adj : dual -> const t -> unit
