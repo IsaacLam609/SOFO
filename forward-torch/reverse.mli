@@ -25,9 +25,10 @@ val sqr : dual -> dual
 val eval : ('a -> 'b) -> 'a -> 'b
 val zero_adj : any t -> dual
 val update_adj : dual -> const t -> unit
-val grad : ('a -> dual) -> 'a -> dual
+val grad : ('a -> dual * 'b) -> 'a -> dual * 'b
 
 module Make (P : Prms.T) : sig
   val const : any t P.p -> dual P.p
-  val grad : (dual P.p -> dual) -> dual P.p -> any t * const t P.p
+  val zero_adj : any t P.p -> dual P.p
+  (* val grad : (dual P.p -> dual * 'a) -> dual P.p -> any t * const t P.p * 'a *)
 end

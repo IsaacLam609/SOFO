@@ -53,14 +53,17 @@ let zero_adj p = { p; a = Some (zeros_like p) }
 let update_adj x delta =
   x.a
   <- (match x.a with
-      | None -> Some delta
+      (* | None -> Some delta *)
+      (* Question: do we want to distinguish between None adj (for SOFO) and zero adj (initialization)? *)
+      (* Don't update adjoint if it is initialized as None *)
+      | None -> None
       | Some a -> Some Maths.C.(a + delta))
 
 let grad f x =
   match f x with
-  | result ->
+  | result, payload ->
     result.a <- Some (C.f 1.);
-    result
+    result, payload
   | effect Gen1 (f, a), k ->
     let p = f a.p in
     let o = zero_adj p in
@@ -104,15 +107,19 @@ let grad f x =
     result
 
 module Make (P : Prms.T) = struct
-  let const p = P.map p ~f:(fun p -> { p; a = Some (zeros_like p) })
+  let const p = P.map p ~f:const
+  let zero_adj p = P.map p ~f:zero_adj
 
-  let grad (f : dual P.p -> dual) (x : dual P.p) =
-    let fx = grad f x in
+  (* IF we want to distinguish between None and zero adj,
+     don't include the grad function here so users can handle x.a = None explicitly 
+     - setting it as zeros_like could be dangerous *)
+  (* let grad (f : dual P.p -> dual * 'a) (x : dual P.p) =
+    let fx, payload = grad f x in
     let g =
       P.map x ~f:(fun x ->
         match x.a with
         | Some g -> g
         | None -> zeros_like x.p)
     in
-    fx.p, g
+    fx.p, g, payload *)
 end
