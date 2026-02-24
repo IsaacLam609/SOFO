@@ -28,6 +28,10 @@ val zero_adj : any t -> dual
 val update_adj : dual -> const t -> unit
 val grad : ('a -> dual * 'b) -> 'a -> dual * 'b
 
+module Bernoulli : sig
+  val sample : ?beta:float -> dual -> dual
+end
+
 module Make (P : Prms.T) : sig
   val const : any t P.p -> dual P.p
   val zero_adj : any t P.p -> dual P.p
