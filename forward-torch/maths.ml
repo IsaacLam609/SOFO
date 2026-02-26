@@ -752,7 +752,7 @@ module Ops = struct
 
   let ( $- ) z =
     let f x = Tensor.(f z - x) in
-    let df ~f:_ ~x:_ ~dx = dx in
+    let df ~f:_ ~x:_ ~dx = Tensor.neg dx in
     { f; df }
 
   let ( $* ) z =
