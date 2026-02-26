@@ -19,6 +19,11 @@ type _ Stdlib.Effect.t +=
       ; logp : dual
       }
       -> dual Stdlib.Effect.t
+  | Concat :
+      { dim : int
+      ; x_list : dual list
+      }
+      -> dual Stdlib.Effect.t
 
 let const p = { p; a = None }
 let primal d = d.p
@@ -40,6 +45,7 @@ let tanh a = lift1 tanh a
 let mean a = lift1 mean a
 let sqr a = lift1 sqr a
 let log a = lift1 log a
+let concat ~dim x_list = Stdlib.Effect.perform (Concat { dim; x_list })
 
 module Bernoulli = struct
   let sample_primal ?(beta = 1.) (logp : dual) =
@@ -51,11 +57,15 @@ module Bernoulli = struct
     (* hard thresholding *)
     let y_const = Tensor.(f 0.5 * (f 1. + sign delta)) |> of_tensor in
     (* check whether we want to propagate a tangent for forward mode *)
-    let y = match tangent logp_primal with
-    | Some _ ->
-      let yt = Maths.(sigmoid (f beta * (exp logp_primal - of_tensor eps))) |> tangent_exn in
-      any (dual ~tangent:yt y_const)
-    | None -> any y_const in
+    let y =
+      match tangent logp_primal with
+      | Some _ ->
+        let yt =
+          Maths.(sigmoid (f beta * (exp logp_primal - of_tensor eps))) |> tangent_exn
+        in
+        any (dual ~tangent:yt y_const)
+      | None -> any y_const
+    in
     y, of_tensor exp_logp, of_tensor delta
 
   (* We can smooth the gradient in both logp space and p space - can experiment on it *)
@@ -91,13 +101,23 @@ let update_adj x delta =
 let eval f x =
   match f x with
   | result -> result
-  | effect Gen1 (f, a), k -> Stdlib.Effect.Deep.continue k { p = f a.p; a = None } (* TODO: can be replaced by const *)
-  | effect Gen2 (f, a, b), k -> Stdlib.Effect.Deep.continue k { p = f a.p b.p; a = None } (* TODO: can be replaced by const *)
+  | effect Gen1 (f, a), k ->
+    Stdlib.Effect.Deep.continue k { p = f a.p; a = None }
+    (* TODO: can be replaced by const *)
+  | effect Gen2 (f, a, b), k ->
+    Stdlib.Effect.Deep.continue k { p = f a.p b.p; a = None }
+    (* TODO: can be replaced by const *)
   | effect Gen2Float (f, a, b), k ->
-    Stdlib.Effect.Deep.continue k { p = f a b.p; a = None } (* TODO: can be replaced by const *)
-  | effect Bernoulli { beta ; logp }, k ->
+    Stdlib.Effect.Deep.continue k { p = f a b.p; a = None }
+    (* TODO: can be replaced by const *)
+  | effect Bernoulli { beta; logp }, k ->
     let y, _, _ = Bernoulli.sample_primal ~beta logp in
     let o = const (y |> any) in
+    Stdlib.Effect.Deep.continue k o
+  | effect Concat {dim ; x_list}, k ->
+    let x_list_p = List.map x_list ~f:(fun x -> primal x) in
+    let y = Maths.concat ~dim x_list_p in
+    let o = const y in
     Stdlib.Effect.Deep.continue k o
 
 let grad f x =
@@ -116,7 +136,7 @@ let grad f x =
       let p = f (any (of_tensor a_)) in
       let y = Tensor.(sum (to_tensor r_bar * to_tensor p)) in
       Tensor.backward y;
-      update_adj a (of_tensor (Tensor.grad a_));
+      update_adj a (of_tensor (Tensor.grad a_))
       (* For debugging *)
       (* print [%message (of_tensor (Tensor.grad a_) |> Maths.mean |> to_float_exn : float)];
       let updated_adjoint =
@@ -124,8 +144,7 @@ let grad f x =
         | Some g -> g
         | None -> Maths.zeros_like (primal a)
       in
-      print [%message (updated_adjoint |> Maths.mean |> to_float_exn : float)] *)
-      );
+      print [%message (updated_adjoint |> Maths.mean |> to_float_exn : float)] *));
     result
   | effect Gen2 (f, a, b), k ->
     (* prepare a for reverse pass after the continuation *)
@@ -140,7 +159,7 @@ let grad f x =
       let y = Tensor.(sum (to_tensor r_bar * to_tensor p)) in
       Tensor.backward y;
       update_adj a (of_tensor (Tensor.grad a_));
-      update_adj b (of_tensor (Tensor.grad b_));
+      update_adj b (of_tensor (Tensor.grad b_))
       (* For debugging *)
       (* print [%message (of_tensor (Tensor.grad a_) |> Maths.mean |> to_float_exn : float)];
       let updated_adjoint =
@@ -148,8 +167,7 @@ let grad f x =
         | Some g -> g
         | None -> Maths.zeros_like (primal a)
       in
-      print [%message (updated_adjoint |> Maths.mean |> to_float_exn : float)] *)
-      );
+      print [%message (updated_adjoint |> Maths.mean |> to_float_exn : float)] *));
     result
   | effect Gen2Float (f, a, b), k ->
     let p = f a b.p in
@@ -162,7 +180,7 @@ let grad f x =
       let p = f a (any (of_tensor b_)) in
       let y = Tensor.(sum (to_tensor r_bar * to_tensor p)) in
       Tensor.backward y;
-      update_adj b (of_tensor (Tensor.grad b_));
+      update_adj b (of_tensor (Tensor.grad b_))
       (* For debugging *)
       (* print [%message (of_tensor (Tensor.grad b_) |> Maths.mean |> to_float_exn : float)];
       let updated_adjoint =
@@ -170,24 +188,39 @@ let grad f x =
         | Some g -> g
         | None -> Maths.zeros_like (primal b)
       in
-      print [%message (updated_adjoint |> Maths.mean |> to_float_exn : float)] *)
-      );
+      print [%message (updated_adjoint |> Maths.mean |> to_float_exn : float)] *));
     result
   | effect Bernoulli { beta; logp }, k ->
-      let y, exp_logp, delta = Bernoulli.sample_primal ~beta logp in
-      let o = zero_adj (y |> any) in
-      let result = Stdlib.Effect.Deep.continue k o in
-      Option.iter (o.a) ~f:(fun r_bar ->
-        let logp_bar = Bernoulli.sample_grad ~beta ~exp_logp ~delta ~r_bar in
-        update_adj logp logp_bar;
-        (* For debugging *)
-        (* print [%message (logp_bar |> mean |> to_float_exn : float)];
+    let y, exp_logp, delta = Bernoulli.sample_primal ~beta logp in
+    let o = zero_adj (y |> any) in
+    let result = Stdlib.Effect.Deep.continue k o in
+    Option.iter o.a ~f:(fun r_bar ->
+      let logp_bar = Bernoulli.sample_grad ~beta ~exp_logp ~delta ~r_bar in
+      update_adj logp logp_bar
+      (* For debugging *)
+      (* print [%message (logp_bar |> mean |> to_float_exn : float)];
         let updated_adjoint = match Reverse.adjoint logp with
           | Some g -> g
           | None -> Maths.zeros_like (Reverse.primal logp) in
-        print [%message (updated_adjoint |> mean |> to_float_exn : float)]; *)
-        );
-      result
+        print [%message (updated_adjoint |> mean |> to_float_exn : float)]; *));
+    result
+  | effect Concat { dim; x_list }, k ->
+    let x_list_p = List.map x_list ~f:(fun x -> primal x) in
+    let y = Maths.concat ~dim x_list_p in
+    let o = zero_adj y in
+    let result = Stdlib.Effect.Deep.continue k o in
+    Option.iter o.a ~f:(fun r_bar ->
+      let cum_start = ref 0 in
+      List.iteri x_list_p ~f:(fun i x_p ->
+        let sizes = Maths.shape x_p in
+        let end_ = Base.(!cum_start + List.nth_exn sizes dim) in
+        let dx_bar = Maths.slice ~dim:dim ~start:!cum_start ~end_ r_bar in
+        update_adj (List.nth_exn x_list i) dx_bar;
+        cum_start := end_
+      );
+    );
+    result
+
 
 module Make (P : Prms.T) = struct
   let const p = P.map p ~f:const

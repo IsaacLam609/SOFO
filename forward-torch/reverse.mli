@@ -27,6 +27,7 @@ val eval : ('a -> 'b) -> 'a -> 'b
 val zero_adj : any t -> dual
 val update_adj : dual -> const t -> unit
 val grad : ('a -> dual * 'b) -> 'a -> dual * 'b
+val concat : dim:int -> dual list -> dual
 
 module Bernoulli : sig
   val sample : ?beta:float -> dual -> dual
