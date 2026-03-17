@@ -24,6 +24,11 @@ type _ Stdlib.Effect.t +=
       ; x_list : dual list
       }
       -> dual Stdlib.Effect.t
+  | Einsum :
+      { operands : (dual * string) list
+      ; return : string
+      }
+      -> dual Stdlib.Effect.t
 
 let const p = { p; a = None }
 let primal d = d.p
@@ -47,6 +52,7 @@ let mean = lift1 mean
 let sqr = lift1 sqr
 let log = lift1 log
 let concat ~dim x_list = Stdlib.Effect.perform (Concat { dim; x_list })
+let einsum operands return = Stdlib.Effect.perform (Einsum { operands; return })
 
 module Bernoulli = struct
   let sample_primal ?(beta = 1.) (logp : dual) =
@@ -117,6 +123,12 @@ let eval f x =
     let y = Maths.concat ~dim x_list_p in
     let o = const y in
     Stdlib.Effect.Deep.continue k o
+  | effect Einsum { operands; return }, k ->
+    Stdlib.Effect.Deep.continue
+      k
+      { p = Maths.einsum (List.map operands ~f:(fun (x, eq) -> primal x, eq)) return
+      ; a = None
+      }
 
 let grad f x =
   match f x with
@@ -187,6 +199,24 @@ let grad f x =
         update_adj x dx_bar;
         end_)
       |> ignore);
+    result
+  | effect Einsum { operands; return }, k ->
+    let _op = List.map operands ~f:(fun (x, eq) -> primal x, eq) in
+    let p = Maths.einsum _op return in
+    let o = zero_adj p in
+    let result = Stdlib.Effect.Deep.continue k o in
+    (* use Torch's autodiff to propagate adjoints *)
+    Option.iter o.a ~f:(fun r_bar ->
+      (* prepare a for reverse pass after the continuation *)
+      (* Note the code here is similar to Maths.Ops.einsum  *)
+      let a = List.map ~f:fst operands in
+      let a_ = List.map ~f:__prepare a in
+      let equation = String.concat ~sep:"," (List.map ~f:snd operands) ^ "->" ^ return in
+      let p = Tensor.einsum ~equation a_ ~path:None in
+      let y = Tensor.(sum (Maths.primal r_bar * p)) in
+      Tensor.backward y;
+      let a__grad = List.map ~f:(fun x -> x |> Tensor.grad |> Maths.const) a_ in
+      ignore (List.map2_exn a a__grad ~f:update_adj));
     result
 
 module Make (P : Prms.T) = struct
