@@ -35,6 +35,10 @@ module Bernoulli : sig
   val sample : ?beta:float -> dual -> dual
 end
 
+module Categorical : sig
+  val sample : tau:float -> hard:bool -> dual -> dual
+end
+
 module Make (P : Prms.T) : sig
   val const : t P.p -> dual P.p
   val zero_adj : t P.p -> dual P.p

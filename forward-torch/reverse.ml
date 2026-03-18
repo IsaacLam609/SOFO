@@ -19,6 +19,12 @@ type _ Stdlib.Effect.t +=
       ; logp : dual
       }
       -> dual Stdlib.Effect.t
+  | Gumbel_Softmax :
+      { tau : float
+      ; hard : bool
+      ; logits : dual
+      }
+      -> dual Stdlib.Effect.t
   | Concat :
       { dim : int
       ; x_list : dual list
@@ -86,6 +92,62 @@ module Bernoulli = struct
     Stdlib.Effect.perform (Bernoulli { beta; logp })
 end
 
+module Categorical = struct
+  let sample_primal ~tau ~hard logits =
+    (* Identical to Maths.gumbel_softmax but we need the same samples from reparameterization for reverse mode *)
+    let logits_primal = primal logits in
+    let _logp = logits_primal |> Maths.primal in
+    let gumbel_noise =
+      let uniform_noise = Tensor.uniform _logp ~from:0. ~to_:1. in
+      Tensor.(neg_ (log_ (neg_ (log_ uniform_noise))))
+    in
+    let logits_ = Tensor.(div_scalar (_logp + gumbel_noise) (Scalar.f tau)) in
+    let shape = Tensor.shape _logp in
+    (* Question: is this correct? *)
+    (* let reduce_dim_list = List.tl_exn shape in *)
+    let rank = List.length shape in
+    (* Create a list [0; 1; 2; ...; rank - 1] *)
+    let all_dims = List.init rank ~f:Fn.id in
+    (* Filter out the 0th dimension (the batch) *)
+    let reduce_dim_list = List.filter all_dims ~f:(fun d -> d <> 0) in
+    let num_classes = List.nth_exn shape 1 in
+    let _y =
+      Tensor.(exp (logits_ - logsumexp ~dim:reduce_dim_list ~keepdim:true logits_))
+    in
+    let _y_final =
+      if hard
+      then (
+        let pos = Tensor.argmax _y ~dim:1 ~keepdim:true in
+        (* Question: one_hot uses Long, Only Tensors of floating point and complex dtype 
+        can require gradients using set_requires_grad in Torch *)
+        (* Tensor.one_hot pos ~num_classes |> Tensor.squeeze) *)
+        let one_hot = Tensor.one_hot pos ~num_classes |> Tensor.squeeze in
+        Tensor.to_type one_hot ~type_:(Tensor.kind _y))
+      else _y
+    in
+    (* check whether we want to propagate a tangent for forward mode *)
+    let y =
+      match tangent logits_primal with
+      | None -> Maths.const _y_final
+      | Some dlogits ->
+        let dy =
+          let tmp1 = Tensor.(div_scalar (_y * dlogits) (Scalar.f tau)) in
+          let tmp2 = Tensor.(div_scalar (_y * _y * dlogits) (Scalar.f tau)) in
+          Tensor.(tmp1 - tmp2)
+        in
+        Maths.dual ~tangent:dy (Maths.const _y_final)
+    in
+    y, Maths.const _y (* soft sample *)
+
+  let sample_grad ~tau ~y_soft ~(r_bar : t) =
+    let open Maths in
+    let jac = (y_soft - (y_soft * y_soft)) / f tau in
+    r_bar * jac
+
+  let sample ~tau ~hard logits : dual =
+    Stdlib.Effect.perform (Gumbel_Softmax { tau; hard; logits })
+end
+
 let __prepare a =
   let a = Maths.primal a.p in
   let device = Tensor.device a in
@@ -116,6 +178,10 @@ let eval f x =
     (* TODO: can be replaced by const *)
   | effect Bernoulli { beta; logp }, k ->
     let y, _, _ = Bernoulli.sample_primal ~beta logp in
+    let o = const y in
+    Stdlib.Effect.Deep.continue k o
+  | effect Gumbel_Softmax { tau; hard; logits }, k ->
+    let y, _ = Categorical.sample_primal ~tau ~hard logits in
     let o = const y in
     Stdlib.Effect.Deep.continue k o
   | effect Concat { dim; x_list }, k ->
@@ -185,6 +251,14 @@ let grad f x =
     Option.iter o.a ~f:(fun r_bar ->
       let logp_bar = Bernoulli.sample_grad ~beta ~exp_logp ~delta ~r_bar in
       update_adj logp logp_bar);
+    result
+  | effect Gumbel_Softmax { tau; hard; logits }, k ->
+    let y, y_soft = Categorical.sample_primal ~tau ~hard logits in
+    let o = zero_adj y in
+    let result = Stdlib.Effect.Deep.continue k o in
+    Option.iter o.a ~f:(fun r_bar ->
+      let logits_bar = Categorical.sample_grad ~tau ~y_soft ~r_bar in
+      update_adj logits logits_bar);
     result
   | effect Concat { dim; x_list }, k ->
     let x_list_p = List.map x_list ~f:(fun x -> primal x) in
