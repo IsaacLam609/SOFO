@@ -30,6 +30,7 @@ val update_adj : dual -> t -> unit
 val grad : ('a -> dual * 'b) -> 'a -> dual * 'b
 val concat : dim:int -> dual list -> dual
 val einsum : (dual * string) list -> string -> dual
+val sum : ?keepdim:bool -> ?dim:int list -> dual -> dual
 
 module Bernoulli : sig
   val sample : ?beta:float -> dual -> dual

@@ -35,6 +35,12 @@ type _ Stdlib.Effect.t +=
       ; return : string
       }
       -> dual Stdlib.Effect.t
+  | Sum :
+      { keepdim : bool option
+      ; dim : int list option
+      ; x : dual
+      }
+      -> dual Stdlib.Effect.t
 
 let const p = { p; a = None }
 let primal d = d.p
@@ -59,10 +65,11 @@ let sqr = lift1 sqr
 let log = lift1 log
 let concat ~dim x_list = Stdlib.Effect.perform (Concat { dim; x_list })
 let einsum operands return = Stdlib.Effect.perform (Einsum { operands; return })
+let sum ?keepdim ?dim x = Stdlib.Effect.perform (Sum { keepdim; dim; x })
 
 module Bernoulli = struct
   let sample_primal ?(beta = 1.) (logp : dual) =
-    let logp_primal = primal logp in
+    let logp_primal = logp.p in
     let _logp = logp_primal |> Maths.primal in
     let eps = Tensor.rand_like _logp in
     let exp_logp = Tensor.(exp _logp) in
@@ -95,7 +102,7 @@ end
 module Categorical = struct
   let sample_primal ~tau ~hard logits =
     (* Identical to Maths.gumbel_softmax but we need the same samples from reparameterization for reverse mode *)
-    let logits_primal = primal logits in
+    let logits_primal = logits.p in
     let _logp = logits_primal |> Maths.primal in
     let gumbel_noise =
       let uniform_noise = Tensor.uniform _logp ~from:0. ~to_:1. in
@@ -185,16 +192,18 @@ let eval f x =
     let o = const y in
     Stdlib.Effect.Deep.continue k o
   | effect Concat { dim; x_list }, k ->
-    let x_list_p = List.map x_list ~f:(fun x -> primal x) in
+    let x_list_p = List.map x_list ~f:(fun x -> x.p) in
     let y = Maths.concat ~dim x_list_p in
     let o = const y in
     Stdlib.Effect.Deep.continue k o
   | effect Einsum { operands; return }, k ->
     Stdlib.Effect.Deep.continue
       k
-      { p = Maths.einsum (List.map operands ~f:(fun (x, eq) -> primal x, eq)) return
+      { p = Maths.einsum (List.map operands ~f:(fun (x, eq) -> x.p, eq)) return
       ; a = None
       }
+  | effect Sum { keepdim; dim; x }, k ->
+    Stdlib.Effect.Deep.continue k { p = Maths.sum ?keepdim ?dim x.p; a = None }
 
 let grad f x =
   match f x with
@@ -245,25 +254,25 @@ let grad f x =
       update_adj a (Maths.const (Tensor.grad a_)));
     result
   | effect Bernoulli { beta; logp }, k ->
-    let y, exp_logp, delta = Bernoulli.sample_primal ~beta logp in
-    let o = zero_adj y in
+    let p, exp_logp, delta = Bernoulli.sample_primal ~beta logp in
+    let o = zero_adj p in
     let result = Stdlib.Effect.Deep.continue k o in
     Option.iter o.a ~f:(fun r_bar ->
       let logp_bar = Bernoulli.sample_grad ~beta ~exp_logp ~delta ~r_bar in
       update_adj logp logp_bar);
     result
   | effect Gumbel_Softmax { tau; hard; logits }, k ->
-    let y, y_soft = Categorical.sample_primal ~tau ~hard logits in
-    let o = zero_adj y in
+    let p, p_soft = Categorical.sample_primal ~tau ~hard logits in
+    let o = zero_adj p in
     let result = Stdlib.Effect.Deep.continue k o in
     Option.iter o.a ~f:(fun r_bar ->
-      let logits_bar = Categorical.sample_grad ~tau ~y_soft ~r_bar in
+      let logits_bar = Categorical.sample_grad ~tau ~y_soft:p_soft ~r_bar in
       update_adj logits logits_bar);
     result
   | effect Concat { dim; x_list }, k ->
-    let x_list_p = List.map x_list ~f:(fun x -> primal x) in
-    let y = Maths.concat ~dim x_list_p in
-    let o = zero_adj y in
+    let x_list_p = List.map x_list ~f:(fun x -> x.p) in
+    let p = Maths.concat ~dim x_list_p in
+    let o = zero_adj p in
     let result = Stdlib.Effect.Deep.continue k o in
     Option.iter o.a ~f:(fun r_bar ->
       List.fold ~init:0 x_list ~f:(fun offset x ->
@@ -275,7 +284,7 @@ let grad f x =
       |> ignore);
     result
   | effect Einsum { operands; return }, k ->
-    let _op = List.map operands ~f:(fun (x, eq) -> primal x, eq) in
+    let _op = List.map operands ~f:(fun (x, eq) -> x.p, eq) in
     let p = Maths.einsum _op return in
     let o = zero_adj p in
     let result = Stdlib.Effect.Deep.continue k o in
@@ -291,6 +300,19 @@ let grad f x =
       Tensor.backward y;
       let a__grad = List.map ~f:(fun x -> x |> Tensor.grad |> Maths.const) a_ in
       ignore (List.map2_exn a a__grad ~f:update_adj));
+    result
+  | effect Sum { keepdim; dim; x }, k ->
+    let p = Maths.sum ?keepdim ?dim x.p in
+    let o = zero_adj p in
+    let result = Stdlib.Effect.Deep.continue k o in
+    (* use Torch's autodiff to propagate adjoints *)
+    Option.iter o.a ~f:(fun r_bar ->
+      (* prepare a for reverse pass after the continuation *)
+      let x_ = __prepare x in
+      let p = Maths.(sum ?keepdim ?dim (const x_)) in
+      let y = Tensor.(sum (Maths.primal r_bar * Maths.primal p)) in
+      Tensor.backward y;
+      update_adj x (Maths.const (Tensor.grad x_)));
     result
 
 module Make (P : Prms.T) = struct
