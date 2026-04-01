@@ -129,13 +129,22 @@ module Categorical = struct
     let _y =
       Tensor.(exp (logits_ - logsumexp ~dim:reduce_dim_list ~keepdim:true logits_))
     in
+    (* DEBUG *)
+    (* let t_to_l t = t |> Tensor.squeeze |> Tensor.to_float1_exn |> Array.to_list in
+    print
+      [%message
+        (_logits_t |> Tensor.shape : int list)
+          (_logits_t |> t_to_l : float list)
+          (logits_ |> t_to_l : float list)
+          (_y |> t_to_l : float list)]; *)
+    (* DEBUG END *)
     let _y_final =
       if hard
       then (
         let pos = Tensor.argmax _y ~dim:1 ~keepdim:true in
         (* Question: one_hot uses Long, Only Tensors of floating point and complex dtype 
         can require gradients using set_requires_grad in Torch *)
-        let one_hot = Tensor.one_hot pos ~num_classes |> Tensor.squeeze in
+        let one_hot = Tensor.one_hot pos ~num_classes |> Tensor.squeeze_dim ~dim:1 in
         Tensor.to_type one_hot ~type_:(Tensor.kind _y))
       else _y
     in
