@@ -101,15 +101,14 @@ end
 
 module Categorical = struct
   let sample_primal ~tau ~hard logits =
-    (* Identical to Maths.gumbel_softmax but we need the same samples from reparameterization for reverse mode *)
     let logits_primal = logits.p in
-    let _logp = logits_primal |> Maths.primal in
+    let _logits_t = logits_primal |> Maths.primal in
     let gumbel_noise =
-      let uniform_noise = Tensor.uniform _logp ~from:0. ~to_:1. in
+      let uniform_noise = Tensor.uniform _logits_t ~from:0. ~to_:1. in
       Tensor.(neg_ (log_ (neg_ (log_ uniform_noise))))
     in
-    let logits_ = Tensor.(div_scalar (_logp + gumbel_noise) (Scalar.f tau)) in
-    let shape = Tensor.shape _logp in
+    let logits_ = Tensor.(div_scalar (_logits_t + gumbel_noise) (Scalar.f tau)) in
+    let shape = Tensor.shape _logits_t in
     (* Question: is this correct? *)
     (* let reduce_dim_list = List.tl_exn shape in *)
     let rank = List.length shape in
@@ -127,7 +126,6 @@ module Categorical = struct
         let pos = Tensor.argmax _y ~dim:1 ~keepdim:true in
         (* Question: one_hot uses Long, Only Tensors of floating point and complex dtype 
         can require gradients using set_requires_grad in Torch *)
-        (* Tensor.one_hot pos ~num_classes |> Tensor.squeeze) *)
         let one_hot = Tensor.one_hot pos ~num_classes |> Tensor.squeeze in
         Tensor.to_type one_hot ~type_:(Tensor.kind _y))
       else _y
