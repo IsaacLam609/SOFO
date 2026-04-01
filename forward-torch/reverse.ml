@@ -104,8 +104,17 @@ module Categorical = struct
     let logits_primal = logits.p in
     let _logits_t = logits_primal |> Maths.primal in
     let gumbel_noise =
+      let open Tensor in
+      let eps = Scalar.f 1e-10 in
       let uniform_noise = Tensor.uniform _logits_t ~from:0. ~to_:1. in
-      Tensor.(neg_ (log_ (neg_ (log_ uniform_noise))))
+      (* Tensor.(neg_ (log_ (neg_ (log_ uniform_noise)))) *)
+      uniform_noise
+      |> (fun t -> add_scalar_ t eps)
+      |> log_
+      |> neg_
+      |> (fun t -> add_scalar_ t eps)
+      |> log_
+      |> neg_
     in
     let logits_ = Tensor.(div_scalar (_logits_t + gumbel_noise) (Scalar.f tau)) in
     let shape = Tensor.shape _logits_t in
