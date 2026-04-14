@@ -125,20 +125,21 @@ module SOFO (P : Prms.T) = struct
   (* calculate natural gradient = V(VtGtGV)^-1 V^t g *)
   let sofo_update ~damping ~tangents:vs ~ggn vtg =
     let u, s, _ = Const.svd ggn in
+    let ss = sqrt s in
     (* how each V should be weighted, as a row array *)
     let weights =
       let tmp = transpose u *@ const vtg in
-      let s =
+      let ss =
         match damping with
-        | `none -> s
+        | `none -> ss
         | `relative_from_top gamma ->
-          let offset = Float.(gamma * Tensor.(maximum (primal s) |> to_float0_exn)) in
-          s +$ offset
+          let offset = Float.(gamma * Tensor.(maximum (primal ss) |> to_float0_exn)) in
+          ss +$ offset
         | `relative_from_bottom gamma ->
-          let offset = Float.(gamma * Tensor.(minimum (primal s) |> to_float0_exn)) in
-          s +$ offset
+          let offset = Float.(gamma * Tensor.(minimum (primal ss) |> to_float0_exn)) in
+          ss +$ offset
       in
-      u / s *@ tmp
+      u / ss *@ tmp
     in
     weighted_vs_sum ~vs weights
 

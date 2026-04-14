@@ -37,7 +37,7 @@ module Bernoulli : sig
 end
 
 module Categorical : sig
-  val sample : tau:float -> dual -> dual
+  val sample : tau:float -> tau_diff:float -> dual -> dual
 end
 
 module Make (P : Prms.T) : sig
