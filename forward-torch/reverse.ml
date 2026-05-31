@@ -2,9 +2,6 @@ open! Base
 open Torch
 open Maths
 
-(* For debugging *)
-(* let print s = Stdio.print_endline (Sexp.to_string_hum s) *)
-
 type nonrec dual =
   { p : t
   ; mutable a : t option
@@ -88,7 +85,6 @@ module Bernoulli = struct
     in
     y, Maths.const exp_logp, Maths.const delta
 
-  (* We can smooth the gradient in both logp space and p space - can experiment on it *)
   let sample_grad ~beta ~exp_logp ~delta ~(r_bar : t) =
     let open Maths in
     let tmp = exp (neg (f beta * delta)) in
@@ -108,31 +104,16 @@ module Categorical = struct
     let z = Maths.((logits_primal + gumbel_noise) /$ tau) in
     let z_diff = Maths.((logits_primal + gumbel_noise) /$ tau_diff) in
     let shape = shape z in
-    (* Question: is this correct? *)
-    (* let reduce_dim_list = List.tl_exn shape in *)
     let rank = List.length shape in
-    (* Create a list [0; 1; 2; ...; rank - 1] *)
     let all_dims = List.init rank ~f:Fn.id in
-    (* Filter out the 0th dimension (the batch) *)
     let reduce_dim_list = List.filter all_dims ~f:(fun d -> d <> 0) in
     let num_classes = List.nth_exn shape 1 in
     let y_soft = Maths.(exp (z - logsumexp ~dim:reduce_dim_list ~keepdim:true z)) in
     let y_soft_diff =
       Maths.(exp (z_diff - logsumexp ~dim:reduce_dim_list ~keepdim:true z_diff))
     in
-    (* DEBUG *)
-    (* let t_to_l t = t |> Tensor.squeeze |> Tensor.to_float1_exn |> Array.to_list in
-    print
-      [%message
-        (_logits_t |> Tensor.shape : int list)
-          (_logits_t |> t_to_l : float list)
-          (logits_ |> t_to_l : float list)
-          (_y |> t_to_l : float list)]; *)
-    (* DEBUG END *)
     let y_final =
       let pos = Tensor.argmax (Maths.primal y_soft) ~dim:1 ~keepdim:true in
-      (* Question: one_hot uses Long, Only Tensors of floating point and complex dtype
-        can require gradients using set_requires_grad in Torch *)
       let one_hot = Tensor.one_hot pos ~num_classes |> Tensor.squeeze_dim ~dim:1 in
       Maths.const (Tensor.to_type one_hot ~type_:(Maths.kind y_soft))
     in
@@ -181,15 +162,10 @@ let update_adj x delta =
 let eval f x =
   match f x with
   | result -> result
-  | effect Gen1 (f, a), k ->
-    Stdlib.Effect.Deep.continue k { p = f a.p; a = None }
-    (* TODO: can be replaced by const *)
-  | effect Gen2 (f, a, b), k ->
-    Stdlib.Effect.Deep.continue k { p = f a.p b.p; a = None }
-    (* TODO: can be replaced by const *)
+  | effect Gen1 (f, a), k -> Stdlib.Effect.Deep.continue k { p = f a.p; a = None }
+  | effect Gen2 (f, a, b), k -> Stdlib.Effect.Deep.continue k { p = f a.p b.p; a = None }
   | effect Gen2Float (f, a, b), k ->
     Stdlib.Effect.Deep.continue k { p = f a.p b; a = None }
-    (* TODO: can be replaced by const *)
   | effect Bernoulli { beta; logp }, k ->
     let y, _, _ = Bernoulli.sample_primal ~beta logp in
     let o = const y in
@@ -298,7 +274,6 @@ let grad f x =
     (* use Torch's autodiff to propagate adjoints *)
     Option.iter o.a ~f:(fun r_bar ->
       (* prepare a for reverse pass after the continuation *)
-      (* Note the code here is similar to Maths.Ops.einsum  *)
       let a = List.map ~f:fst operands in
       let a_ = List.map ~f:__prepare a in
       let equation = String.concat ~sep:"," (List.map ~f:snd operands) ^ "->" ^ return in
